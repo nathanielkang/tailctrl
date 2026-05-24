@@ -1,0 +1,65 @@
+# Fast smoke config — full TailCtrl stack, tiny data
+seed: 42
+device: cpu
+
+data:
+  source: synthetic_skewed
+  n_samples: 400
+  n_features: 12
+  noise_std: 0.15
+  skew_strength: 2.5
+  split_ratios:
+    meta_train: 0.50
+    meta_val: 0.15
+    model_val: 0.15
+    test: 0.20
+
+strata:
+  kde_bandwidth: null
+  tail_quantile: 0.15
+  dense_quantile: 0.85
+
+model:
+  hidden_dim: 64
+  num_layers: 3
+  dropout: 0.1
+  controlled_layers: [1, 2]
+
+controller:
+  hidden_dim: 32
+  lambda_max: 5.0
+  tau_scale: 0.5
+
+training:
+  outer_steps: 6
+  inner_steps_k: 3
+  inner_lr: 0.002
+  outer_lr: 0.001
+  batch_size: 64
+  alpha_sparsity: 0.5
+  beta_gap_var: 0.1
+  beta_weight_decay: 1.0e-4
+  tail_mask_mid: 0.05
+  tail_mask_dense: 0.05
+  m_tail: 1.0
+  tail_boost_gamma: 0.3
+  inv_density_power: 0.5
+  inv_density_clip: 8.0
+
+phase_a:
+  epochs: 12
+  log_epochs: [1, 6, 12]
+  penultimate_layer_index: 2
+  phenomenon_epoch: 6
+
+phase_b:
+  methods: [erm, fixed_floor, tailctrl, random_policy, no_outer_objective, dense_only]
+  fixed_floor_lambda: 0.5
+  fixed_floor_tau: 0.3
+
+gates:
+  min_loss_drop: 0.001
+  policy_variance_eps: 1.0e-10
+  budget_ratio_low: 0.1
+  budget_ratio_high: 20.0
+  split_disjoint_required: true

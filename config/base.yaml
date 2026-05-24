@@ -1,0 +1,14 @@
+seed: 42
+phase: A
+dataset:
+  n_samples: 160
+  n_features: 8
+  noise_std: 0.2
+split:
+  train_ratio: 0.75
+training:
+  epochs: 8
+  lr: 0.05
+gates:
+  min_loss_drop: 0.01
+  budget_ratio_target: 1.0

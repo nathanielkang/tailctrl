@@ -1,0 +1,81 @@
+# TailCtrl full pipeline defaults (CPU-smoke friendly; scale for GPU runs)
+seed: 42
+device: cpu
+
+data:
+  source: synthetic_skewed
+  n_samples: 2000
+  n_features: 16
+  noise_std: 0.15
+  skew_strength: 2.0
+  # four disjoint splits (must sum to 1.0)
+  split_ratios:
+    meta_train: 0.50
+    meta_val: 0.15
+    model_val: 0.15
+    test: 0.20
+
+benchmarks:
+  datasets:
+    - abalone
+    - bike_sharing
+    - wine_quality
+    - cpu_act
+    - energy_efficiency
+    - concrete
+    - insurance
+    - house_16h
+    - superconductivity
+    - airfoil_self_noise
+    - kin8nm
+    - diabetes
+
+strata:
+  kde_bandwidth: null  # null => Silverman rule via sklearn
+  tail_quantile: 0.15   # lowest 15% density => tail
+  dense_quantile: 0.85  # highest 15% density => dense
+
+model:
+  hidden_dim: 128
+  num_layers: 4
+  dropout: 0.1
+  controlled_layers: [1, 2, 3]  # 0-indexed hidden blocks (exclude input head)
+
+controller:
+  hidden_dim: 64
+  lambda_max: 10.0
+  tau_scale: 1.0
+
+training:
+  outer_steps: 30
+  inner_steps_k: 5
+  inner_lr: 1.0e-3
+  outer_lr: 5.0e-4
+  batch_size: 256
+  alpha_sparsity: 1.0
+  beta_gap_var: 0.1
+  beta_weight_decay: 1.0e-4
+  tail_mask_mid: 0.05
+  tail_mask_dense: 0.05
+  m_tail: 1.0
+  tail_boost_gamma: 0.5
+  inv_density_power: 0.5
+  inv_density_clip: 8.0
+
+phase_a:
+  epochs: 50
+  log_epochs: [1, 5, 10, 20, 50]
+  penultimate_layer_index: 2  # index into controlled_layers for primary gap
+  phenomenon_epoch: 10
+
+phase_b:
+  methods: [erm, fixed_floor, tailctrl, random_policy, no_outer_objective, dense_only]
+  fixed_floor_lambda: 1.0
+  fixed_floor_tau: 0.5
+
+gates:
+  min_loss_drop: 0.01
+  policy_variance_eps: 1.0e-4
+  budget_ratio_low: 0.5
+  budget_ratio_high: 6.0
+  split_disjoint_required: true

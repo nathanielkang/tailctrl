@@ -1,0 +1,42 @@
+# Experiment outputs (generated locally; not part of the public code release)
+outputs/
+results/
+*.csv
+*.json
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Secrets and local credentials
+.env
+*.pem
+*-key.json
+
+# Cached downloads (OpenML / sklearn use user cache by default)
+data/
+*.pkl
+*.pickle
+
+# Internal-only tooling (not required to reproduce paper experiments)
+scripts/deploy_phase_b_gcp.ps1
+scripts/sync_experiment_registry.py
+scripts/run_winmax_suite.py
+scripts/run_winmax_suite_v2.py
+scripts/run_badset_tuning.py
+config/tailctrl_methodfix_rerun.yaml
