@@ -73,8 +73,6 @@ python scripts/run_sensitivity_suite.py --config config/tailctrl_default.yaml --
 
 **Included:** TailCtrl, ERM, and ablation variants implemented in this tree (fixed floor, random policy, no outer loop, dense-only, etc.) on the shared MLP backbone.
 
-**Not included:** External baseline implementations cited in the paper (e.g., resampling or transformer tabular models). Those require separate codebases or published packages.
-
 ## Citation
 
 If you use this code, please cite the associated TailCtrl manuscript when available.
