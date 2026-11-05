@@ -1,82 +1,86 @@
 # TailCtrl
 
-Reference implementation for **TailCtrl**: bilevel, geometry-aware training for deep tabular regression under imbalanced target densities. The method couples a standard MLP predictor with a controller that maps stratum-wise spectral diagnostics to per-layer penalty strengths and spectral floors.
+**When a rare target collapses the hidden representation, the control is a floor on that stratum's participation ratio.**
 
-This repository contains **source code only**. It does not ship datasets (loaded at runtime via OpenML or scikit-learn), pretrained weights, or precomputed result tables. Running the scripts creates local logs under `outputs/`, which is excluded from version control.
+TailCtrl trains a tabular regressor under layer-wise spectral floors. A controller reads the participation ratio of each density stratum and emits a floor and a penalty. The predictor takes inner steps under those floors. A truncated bilevel step updates the controller from held-out tail error. A sparsity charge on the non-tail penalties sits in that outer loss.
 
-## Requirements
+<p align="center">
+  <a href="#when-rare-targets-collapse"><strong>The miss</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#bilevel-floors"><strong>The controller</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#ablation"><strong>Ablation</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#quick-start"><strong>Quick start</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#layout"><strong>Layout</strong></a>
+</p>
 
-- Python 3.10+
-- Dependencies: see `requirements.txt` (PyTorch, NumPy, SciPy, scikit-learn, pandas, PyYAML).
+## When rare targets collapse
+
+Squared error can stay low while the rare stratum folds onto a few directions. The dense stratum still spreads across many.
+
+<p align="center">
+  <img src="docs/figures/fig_motivation.png" alt="Imbalanced target landscape, representation collapse in the tail, and bilevel spectral control" width="92%">
+</p>
+
+## Bilevel floors
+
+Each outer step builds stratum features once, holds the emitted floors for the inner steps, and differentiates held-out tail error through that unroll.
+
+<p align="center">
+  <img src="docs/figures/fig_framework.png" alt="TailCtrl pipeline from the frozen density partition through geometry diagnostics to the bilevel objective" width="96%">
+</p>
+
+## Ablation
+
+Removing the outer update or freezing a single floor raises tail error relative to the full controller. The right panel is inner-unroll depth on three datasets.
+
+<p align="center">
+  <img src="docs/figures/fig_results.png" alt="Component ablation of macro tail error and sensitivity to inner unroll depth" width="96%">
+</p>
+
+## Quick start
+
+Python 3.10+ recommended.
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+.venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-## Quick verification (smoke test)
-
-Run a short end-to-end check on synthetic data before any full benchmark:
-
-```bash
 python scripts/smoke_tailctrl.py --config config/smoke.yaml --out-dir outputs/smoke
 ```
 
-A successful run writes JSON summaries under `outputs/smoke/` and exits with code 0.
+On macOS or Linux, activate with `source .venv/bin/activate`.
 
-## Reproducing the paper pipeline
-
-Experiments use a **four-way split** (meta-train, meta-validation, model-selection validation, test) and **frozen KDE strata** on the target axis. Default hyperparameters are in `config/tailctrl_default.yaml`.
+The hypergradient check is separate:
 
 ```bash
-# Optional: dataset counts for manuscript tables (writes outputs/dataset_stats.csv locally)
-python scripts/summarize_datasets.py --out outputs/dataset_stats.csv
+python scripts/smoke_hypergrad.py
+```
 
-# Phase A — ERM collapse diagnostic (12 tabular benchmarks, one seed)
+## Reproduce
+
+Default settings are in `config/tailctrl_default.yaml`. Outputs stay under `outputs/`.
+
+```bash
 python scripts/run_phase_a_suite.py --config config/tailctrl_default.yaml --seed 42
-
-# Phase B — TailCtrl and in-repo ablations (ERM, fixed floor, dense-only, etc.)
 python scripts/run_benchmark_suite.py --config config/tailctrl_default.yaml --seed 42 --out-dir outputs/suite
-
-# Multi-seed runs (example: five seeds)
 python scripts/run_multi_seed_suite.py --config config/tailctrl_default.yaml --seeds 0 1 2 3 4
-
-# Aggregate JSON logs into summary CSVs (local outputs/aggregated/)
 python scripts/aggregate_experiment_outputs.py --out-dir outputs/aggregated
 ```
 
-Optional sensitivity sweeps over inner unroll depth, sparsity weight, and tail quantile:
+## Layout
 
-```bash
-python scripts/run_sensitivity_suite.py --config config/tailctrl_default.yaml --seed 42
+```
+src/tailctrl/     data, backbone, geometry, controller, losses, bilevel trainer
+scripts/          smoke tests and experiment drivers
+config/           YAML settings
+docs/figures/     figures used in this README
 ```
 
-## Package layout
+## Notes
 
-| Path | Role |
-|------|------|
-| `src/tailctrl/data.py` | Dataset loaders, four-way splits, KDE stratum labels |
-| `src/tailctrl/backbone.py` | Tabular MLP regressor |
-| `src/tailctrl/geometry.py` | Participation ratio and stratum-conditioned geometry |
-| `src/tailctrl/controller.py` | Geometry controller and ablation controllers |
-| `src/tailctrl/losses.py` | Inner / outer objectives |
-| `src/tailctrl/bilevel.py` | Bilevel training loop (truncated unroll) |
-| `src/tailctrl/phase_a.py` | Phase A phenomenon diagnostic |
-| `src/tailctrl/phase_b.py` | Phase B method comparison |
-| `src/tailctrl/aggregate.py` | Post-hoc CSV aggregation helpers |
-| `src/tailctrl/stats_tests.py` | Friedman / Nemenyi tests on ablation ranks |
-| `config/*.yaml` | Data splits, model, training, and phase settings |
-| `scripts/` | CLI entry points listed above |
-
-## Scope
-
-**Included:** TailCtrl, ERM, and ablation variants implemented in this tree (fixed floor, random policy, no outer loop, dense-only, etc.) on the shared MLP backbone.
-
-## Citation
-
-If you use this code, please cite the associated TailCtrl manuscript when available.
-
-## License
-
-Code is provided for research reproduction. See the repository license file if present.
+- The participation ratio is \((\operatorname{tr}\Sigma)^2 / \|\Sigma\|_F^2\) on the stratum sample covariance. A zero covariance is set to 1.
+- A stratum enters the geometry term when the minibatch holds at least two of its rows.
+- The sparsity charge is added to the outer loss. The emitted floors are held fixed during the inner steps.
