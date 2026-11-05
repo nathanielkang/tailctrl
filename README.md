@@ -21,7 +21,7 @@ TailCtrl trains a tabular regressor under layer-wise spectral floors. A controll
 Squared error can stay low while the rare stratum folds onto a few directions. The dense stratum still spreads across many.
 
 <p align="center">
-  <img src="docs/figures/fig_motivation.png?v=d25d71f" alt="Imbalanced target landscape, representation collapse in the tail, and bilevel spectral control" width="92%">
+  <img src="/nathanielkang/tailctrl/raw/d25d71f9466273c9653239cca882b5b99dc5260d/docs/figures/fig_motivation.png" alt="Imbalanced target landscape, representation collapse in the tail, and bilevel spectral control" width="92%">
 </p>
 
 ## Bilevel floors
@@ -29,7 +29,7 @@ Squared error can stay low while the rare stratum folds onto a few directions. T
 Each outer step builds stratum features once, holds the emitted floors for the inner steps, and differentiates held-out tail error through that unroll.
 
 <p align="center">
-  <img src="docs/figures/fig_framework.png?v=d25d71f" alt="TailCtrl pipeline from the frozen density partition through geometry diagnostics to the bilevel objective" width="96%">
+  <img src="/nathanielkang/tailctrl/raw/d25d71f9466273c9653239cca882b5b99dc5260d/docs/figures/fig_framework.png" alt="TailCtrl pipeline from the frozen density partition through geometry diagnostics to the bilevel objective" width="96%">
 </p>
 
 ## Ablation
