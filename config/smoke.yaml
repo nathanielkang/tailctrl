@@ -39,12 +39,13 @@ training:
   alpha_sparsity: 0.5
   beta_gap_var: 0.1
   beta_weight_decay: 1.0e-4
-  tail_mask_mid: 0.05
-  tail_mask_dense: 0.05
+  predictor_weight_decay: 1.0e-4
+  early_stop_patience: 5
+  tail_mask_mid: 1.0
+  tail_mask_dense: 1.0
   m_tail: 1.0
-  tail_boost_gamma: 0.3
-  inv_density_power: 0.5
-  inv_density_clip: 8.0
+  tail_boost_gamma: 0.0
+  inv_density_power: 0.0
 
 phase_a:
   epochs: 12

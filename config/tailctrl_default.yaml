@@ -36,10 +36,10 @@ strata:
   dense_quantile: 0.85  # highest 15% density => dense
 
 model:
-  hidden_dim: 128
+  hidden_dim: 256
   num_layers: 4
   dropout: 0.1
-  controlled_layers: [1, 2, 3]  # 0-indexed hidden blocks (exclude input head)
+  controlled_layers: [0, 1, 2, 3]  # all four hidden blocks (0-indexed); p = 2 * 4 * 3 = 24 controller inputs
 
 controller:
   hidden_dim: 64
@@ -54,18 +54,21 @@ training:
   batch_size: 256
   alpha_sparsity: 1.0
   beta_gap_var: 0.1
-  beta_weight_decay: 1.0e-4
-  tail_mask_mid: 0.05
-  tail_mask_dense: 0.05
+  beta_weight_decay: 1.0e-4      # beta_2, controller l2 penalty in L_out
+  predictor_weight_decay: 1.0e-4 # Adam weight decay for the single-level predictors (ERM, fixed floor)
+  early_stop_patience: 5         # D_modelval TailMAE; best checkpoint is evaluated on D_test
+  # m_s in equation (inner) is a 0/1 presence flag; all strata on for the full method
+  tail_mask_mid: 1.0
+  tail_mask_dense: 1.0
   m_tail: 1.0
-  tail_boost_gamma: 0.5
-  inv_density_power: 0.5
-  inv_density_clip: 8.0
+  # the density-weighted residual is not in equation (inner); the trainer rejects nonzero values
+  tail_boost_gamma: 0.0
+  inv_density_power: 0.0
 
 phase_a:
   epochs: 50
   log_epochs: [1, 5, 10, 20, 50]
-  penultimate_layer_index: 2  # index into controlled_layers for primary gap
+  penultimate_layer_index: 2  # hidden-block index of l* (penultimate of four blocks)
   phenomenon_epoch: 10
 
 phase_b:

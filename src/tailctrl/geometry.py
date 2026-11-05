@@ -7,6 +7,7 @@ from tailctrl.types import STRATA, GeometrySnapshot
 
 
 def _svd_singular_values(matrix: np.ndarray) -> np.ndarray:
+    """Singular values of the centered activation matrix (used by the auxiliary rank metrics)."""
     if matrix.shape[0] < 2:
         return np.array([0.0], dtype=np.float64)
     centered = matrix - matrix.mean(axis=0, keepdims=True)
@@ -14,7 +15,17 @@ def _svd_singular_values(matrix: np.ndarray) -> np.ndarray:
     return s
 
 
+def covariance_singular_values(matrix: np.ndarray) -> np.ndarray:
+    """Singular values sigma_j of the stratum sample covariance Sigma_{l,s} (equation (rho))."""
+    if matrix.shape[0] < 2:
+        return np.array([0.0], dtype=np.float64)
+    centered = matrix - matrix.mean(axis=0, keepdims=True)
+    sigma = centered.T @ centered / float(matrix.shape[0] - 1)
+    return np.linalg.svd(sigma, compute_uv=False)
+
+
 def participation_ratio(singular_values: np.ndarray) -> float:
+    """(sum_j sigma_j)^2 / sum_j sigma_j^2; pass covariance singular values for equation (rho)."""
     s = singular_values
     if s.size == 0 or np.allclose(s, 0):
         return 0.0
@@ -66,7 +77,7 @@ def layer_stratum_geometry(
         epoch=epoch,
         layer=layer,
         stratum=stratum,
-        participation_ratio=participation_ratio(s),
+        participation_ratio=participation_ratio(covariance_singular_values(activations)),
         effective_rank=effective_rank(s),
         stable_rank=stable_rank(s),
         nrc1=nrc1_noise_suppression(s, target_dim=target_dim),

@@ -95,6 +95,10 @@ def run_phase_b(cfg: dict[str, Any], out_dir: Path, seed: int) -> dict[str, Any]
             "train_loss_last": res.train_loss_trace[-1] if res.train_loss_trace else 0.0,
             "wall_clock_sec": res.budget.wall_clock_sec,
             "forward_passes": res.budget.forward_passes,
+            "outer_steps_run": res.outer_steps_run,
+            "best_outer_step": res.best_outer_step,
+            "hypergrad_norm_mean": float(np.mean(res.hypergrad_norm_trace)) if res.hypergrad_norm_trace else 0.0,
+            "geometry_gate": res.geometry_gate,
         }
         budgets[method] = res.budget.wall_clock_sec
         append_csv_row(

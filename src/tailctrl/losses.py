@@ -3,8 +3,10 @@ from __future__ import annotations
 import torch
 
 from tailctrl.backbone import mse_loss, tail_mae
-from tailctrl.geometry import batch_geometry_by_strata, collapse_gap
-from tailctrl.types import STRATA
+
+# m_s in equation (inner): a stratum has batch support when it holds at least two rows,
+# the minimum for a sample covariance.
+STRATUM_MIN_SUPPORT = 2
 
 
 def hinge_sq(x: torch.Tensor) -> torch.Tensor:
@@ -19,14 +21,44 @@ def stratum_masks(stratum_source: torch.Tensor, q_low: float, q_high: float) -> 
     }
 
 
-def participation_ratio_torch(hidden: torch.Tensor) -> torch.Tensor:
-    centered = hidden - hidden.mean(dim=0, keepdim=True)
-    if centered.shape[0] < 2:
-        return torch.zeros((), device=hidden.device)
-    s = torch.linalg.svdvals(centered)
-    num = torch.sum(s) ** 2
-    den = torch.sum(s**2) + 1e-12
-    return num / den
+def stratum_covariance(h_s: torch.Tensor) -> torch.Tensor:
+    """Sample covariance Sigma_{l,s} of the rows of h_s (n_s x d_l), shape d_l x d_l."""
+    n = h_s.shape[0]
+    centered = h_s - h_s.mean(dim=0, keepdim=True)
+    return centered.transpose(0, 1) @ centered / float(n - 1)
+
+
+def participation_ratio_torch(h_s: torch.Tensor) -> torch.Tensor:
+    """Equation (rho): (sum_j sigma_j)^2 / sum_j sigma_j^2 with sigma_j the singular values of Sigma_{l,s}.
+
+    Sigma is symmetric positive semidefinite, so its singular values are its eigenvalues and
+    sum_j sigma_j = tr(Sigma), sum_j sigma_j^2 = ||Sigma||_F^2. The closed form is exact and
+    twice differentiable, which the unrolled hypergradient needs (an eigen-solver's second
+    derivative is singular on the repeated zero eigenvalues of a rank-deficient Sigma).
+    """
+    if h_s.shape[0] < STRATUM_MIN_SUPPORT:
+        return torch.zeros((), device=h_s.device, dtype=h_s.dtype)
+    sigma = stratum_covariance(h_s)
+    trace = torch.diagonal(sigma).sum()
+    frob_sq = torch.sum(sigma * sigma)
+    # Identical rows give Sigma = 0 and a 0/0 ratio. The manuscript sets rho := 1
+    # there and drops that pair's hinge gradient. A constant 1 has no theta gradient.
+    if float(frob_sq.detach()) == 0.0:
+        return torch.ones((), device=h_s.device, dtype=h_s.dtype)
+    return trace**2 / frob_sq
+
+
+def collapse_gap_torch(
+    hidden: torch.Tensor,
+    stratum_source: torch.Tensor,
+    q_low: float,
+    q_high: float,
+) -> torch.Tensor | None:
+    """delta_rho = rho_dense - rho_tail at one layer; None when either stratum lacks support."""
+    masks = stratum_masks(stratum_source, q_low, q_high)
+    if int(masks["dense"].sum()) < STRATUM_MIN_SUPPORT or int(masks["tail"].sum()) < STRATUM_MIN_SUPPORT:
+        return None
+    return participation_ratio_torch(hidden[masks["dense"]]) - participation_ratio_torch(hidden[masks["tail"]])
 
 
 def inner_geometry_penalty(
@@ -34,27 +66,33 @@ def inner_geometry_penalty(
     stratum_source: torch.Tensor,
     lam_map: dict[tuple[int, str], torch.Tensor],
     tau_map: dict[tuple[int, str], torch.Tensor],
-    masks_weight: dict[str, float],
+    stratum_on: dict[str, float],
     q_low: float,
     q_high: float,
-    reliability_min: int,
+    stats: dict[str, float] | None = None,
 ) -> torch.Tensor:
+    """sum_{l,s} m_s lambda_{l,s} [tau_{l,s} - rho_{l,s}]_+^2.
+
+    m_s = 1 when stratum s has at least STRATUM_MIN_SUPPORT rows in the batch. stratum_on is a
+    0/1 selector used only by the dense-only ablation; the full method keeps every stratum on.
+    """
     penalty = torch.zeros((), device=stratum_source.device)
-    stratum_masks_batch = stratum_masks(stratum_source, q_low, q_high)
+    masks = stratum_masks(stratum_source, q_low, q_high)
     for (layer, stratum), lam in lam_map.items():
-        m_s = masks_weight[stratum]
-        if m_s <= 0:
+        if stratum_on.get(stratum, 1.0) <= 0:
             continue
-        mask = stratum_masks_batch[stratum]
-        n_s = int(mask.sum().item())
-        d_l = hidden_by_layer[layer].shape[1]
-        if n_s < max(reliability_min, 2 * d_l):
+        mask = masks[stratum]
+        if int(mask.sum().item()) < STRATUM_MIN_SUPPORT:
             continue
-        h_s = hidden_by_layer[layer][mask]
-        rho = participation_ratio_torch(h_s)
-        tau = tau_map[(layer, stratum)]
-        violation = hinge_sq(tau - rho)
-        penalty = penalty + m_s * lam * violation
+        rho = participation_ratio_torch(hidden_by_layer[layer][mask])
+        violation = hinge_sq(tau_map[(layer, stratum)] - rho)
+        penalty = penalty + lam * violation
+        if stats is not None:
+            stats[f"applied_{stratum}"] = stats.get(f"applied_{stratum}", 0.0) + 1.0
+            if float((lam * violation).detach()) > 0.0:
+                stats[f"nonzero_{stratum}"] = stats.get(f"nonzero_{stratum}", 0.0) + 1.0
+    if stats is not None:
+        stats["pairs_total"] = stats.get("pairs_total", 0.0) + float(len(lam_map))
     return penalty
 
 
@@ -65,58 +103,24 @@ def inner_loss(
     stratum_source: torch.Tensor,
     lam_map: dict,
     tau_map: dict,
-    masks_weight: dict[str, float],
+    stratum_on: dict[str, float],
     q_low: float,
     q_high: float,
-    alpha_sparsity: float,
-    lam_mid_dense: list[torch.Tensor],
-    reliability_min: int = 2,
-    tail_boost_gamma: float = 0.0,
-    inv_density_power: float = 0.0,
-    inv_density_clip: float = 10.0,
+    stats: dict[str, float] | None = None,
 ) -> torch.Tensor:
+    """Equation (inner): MSE + spectral hinge. The sparsity charge is in the outer loss."""
     base = mse_loss(pred, target)
     geom = inner_geometry_penalty(
         hidden_by_layer,
         stratum_source,
         lam_map,
         tau_map,
-        masks_weight,
+        stratum_on,
         q_low,
         q_high,
-        reliability_min=reliability_min,
+        stats=stats,
     )
-    sparsity = torch.zeros((), device=pred.device)
-    if alpha_sparsity > 0 and lam_mid_dense:
-        sparsity = alpha_sparsity * sum(torch.abs(l) for l in lam_mid_dense)
-    tail_boost = torch.zeros((), device=pred.device)
-    if tail_boost_gamma > 0:
-        masks = stratum_masks(stratum_source, q_low, q_high)
-        residual_sq = (pred - target) ** 2
-        inv_d = torch.ones_like(stratum_source)
-        if inv_density_power > 0:
-            inv_d = (1.0 / (stratum_source.clamp_min(1.0e-12) ** inv_density_power)).clamp_max(inv_density_clip)
-        weighted = (
-            masks_weight.get("tail", 0.0) * inv_d * masks["tail"].float()
-            + masks_weight.get("mid", 0.0) * masks["mid"].float()
-            + masks_weight.get("dense", 0.0) * masks["dense"].float()
-        )
-        if int((weighted > 0).sum().item()) > 0:
-            tail_boost = tail_boost_gamma * torch.sum(weighted * residual_sq) / torch.sum(weighted)
-    return base + geom + sparsity + tail_boost
-
-
-def gap_variance_from_batch(
-    hidden_by_layer: dict[int, torch.Tensor],
-    stratum_source: torch.Tensor,
-    layer: int,
-    q_low: float,
-    q_high: float,
-) -> torch.Tensor:
-    snaps = batch_geometry_by_strata(hidden_by_layer[layer], stratum_source, q_low, q_high, epoch=0, layer=layer)
-    rho = {s.stratum: s.participation_ratio for s in snaps}
-    gap = collapse_gap(rho.get("dense", 0.0), rho.get("tail", 0.0))
-    return torch.tensor(gap, device=stratum_source.device)
+    return base + geom
 
 
 def outer_loss(
@@ -131,28 +135,25 @@ def outer_loss(
     q_high: float,
     beta_gap_var: float,
     beta_weight_decay: float,
-    lam_map: dict[tuple[int, str], torch.Tensor] | None = None,
-    tau_map: dict[tuple[int, str], torch.Tensor] | None = None,
-    masks_weight: dict[str, float] | None = None,
+    alpha_sparsity: float = 0.0,
+    lam_map: dict | None = None,
 ) -> torch.Tensor:
-    tail = tail_mae(pred, target, tail_mask)
-    gap = gap_variance_from_batch(hidden_by_layer, stratum_source, gap_layer, q_low, q_high)
-    policy_term = torch.zeros((), device=pred.device)
-    if lam_map and tau_map:
-        masks = stratum_masks(stratum_source, q_low, q_high)
-        h = hidden_by_layer[gap_layer]
-        for s in STRATA:
-            mask = masks[s]
-            if int(mask.sum().item()) < 2:
-                continue
-            h_s = h[mask]
-            rho_s = participation_ratio_torch(h_s)
-            lam_s = lam_map[(gap_layer, s)]
-            tau_s = tau_map[(gap_layer, s)]
-            w_s = 1.0 if masks_weight is None else float(masks_weight.get(s, 1.0))
-            policy_term = policy_term + w_s * lam_s * hinge_sq(tau_s - rho_s)
-    reg = torch.zeros((), device=pred.device)
+    """Equation (outer): TailMAE + beta_1 delta_rho^2 + alpha * sum of mid/dense penalties + beta_2 ||phi||^2.
+
+    lambda and tau are the values emitted before the inner loop and held fixed, so this charge
+    does not enter grad_theta. It enters grad_phi through those emitted penalties.
+    """
+    total = tail_mae(pred, target, tail_mask)
+    if alpha_sparsity > 0 and lam_map:
+        charged = [lam for (layer, stratum), lam in lam_map.items() if stratum in ("mid", "dense")]
+        if charged:
+            total = total + alpha_sparsity * sum(charged)
+    gap = collapse_gap_torch(hidden_by_layer[gap_layer], stratum_source, q_low, q_high)
+    if gap is not None and beta_gap_var > 0:
+        total = total + beta_gap_var * gap * gap
     if beta_weight_decay > 0:
+        reg = torch.zeros((), device=pred.device)
         for p in controller.parameters():
             reg = reg + torch.sum(p**2)
-    return tail + beta_gap_var * (gap * gap + policy_term) + beta_weight_decay * reg
+        total = total + beta_weight_decay * reg
+    return total
